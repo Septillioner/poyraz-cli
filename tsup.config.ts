@@ -12,5 +12,6 @@ export default defineConfig({
   banner: {
     js: '#!/usr/bin/env node',
   },
-  external: ['poyraz', 'chalk', '@inquirer/prompts', 'dotenv'],
+  // Bundle local sources only; leave node_modules to Node (avoids CJS require shims in ESM).
+  external: [/^[^./]/],
 });

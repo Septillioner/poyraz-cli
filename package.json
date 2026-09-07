@@ -1,6 +1,6 @@
 {
   "name": "poyraz-cli",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Terminal CLI for the Poyraz agent runtime",
   "type": "module",
   "license": "MIT",
@@ -20,10 +20,12 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
+    "@inquirer/core": "^12.0.2",
     "@inquirer/prompts": "^8.5.2",
+    "@inquirer/type": "^4.1.1",
     "chalk": "^5.6.2",
     "dotenv": "^17.4.2",
-    "poyraz": "^0.1.0"
+    "poyraz": "^0.1.1"
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
