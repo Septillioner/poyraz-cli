@@ -1,0 +1,34 @@
+{
+  "name": "poyraz-cli",
+  "version": "0.1.0",
+  "description": "Terminal CLI for the Poyraz agent runtime",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "poyraz": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "start": "node dist/index.js",
+    "dev": "npx tsx index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.5.2",
+    "chalk": "^5.6.2",
+    "dotenv": "^17.4.2",
+    "poyraz": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "tsup": "^8.5.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}
