@@ -31,20 +31,20 @@ function mcpConfigPath(): string {
 
 function formatServerStatus(id: string): string {
   const state = mcpClientManager.listStates().find((s) => s.id === id);
-  if (!state) return chalk.gray('(bağlı değil)');
-  if (state.status === 'connected') return chalk.green(`bağlı · ${state.toolCount} araç`);
-  if (state.status === 'disabled') return chalk.gray('devre dışı');
-  return chalk.red(`hata: ${state.error ?? 'bilinmeyen'}`);
+  if (!state) return chalk.gray('(not connected)');
+  if (state.status === 'connected') return chalk.green(`connected · ${state.toolCount} tool(s)`);
+  if (state.status === 'disabled') return chalk.gray('disabled');
+  return chalk.red(`error: ${state.error ?? 'unknown'}`);
 }
 
 export function printMcpList(): void {
   const servers = listMcpServers();
-  printSection('MCP Sunucuları');
-  printField('Dosya:', mcpConfigPath());
+  printSection('MCP servers');
+  printField('File:', mcpConfigPath());
   console.log();
 
   if (servers.length === 0) {
-    console.log(chalk.gray('  Henüz sunucu eklenmedi.'));
+    console.log(chalk.gray('  No servers added yet.'));
     return;
   }
 
@@ -56,7 +56,7 @@ export function printMcpList(): void {
 }
 
 export function printMcpPath(): void {
-  printField('Dosya:', mcpConfigPath());
+  printField('File:', mcpConfigPath());
 }
 
 async function reloadMcpServers(ctx: McpPanelContext): Promise<void> {
@@ -80,34 +80,34 @@ async function promptKeyValueLines(message: string): Promise<Record<string, stri
 }
 
 async function promptStdioServerDef(): Promise<McpServerDef | undefined> {
-  const command = await input({ message: 'Komut (örn. npx)' });
+  const command = await input({ message: 'Command (e.g. npx)' });
   if (!command.trim()) {
-    console.log(chalk.yellow('Komut boş; eklenmedi.'));
+    console.log(chalk.yellow('Command is empty; not added.'));
     return undefined;
   }
 
   const argsLine = await input({
-    message: 'Argümanlar (boşlukla ayrılmış, örn. -y @modelcontextprotocol/server-filesystem /path)',
+    message: 'Arguments (space-separated, e.g. -y @modelcontextprotocol/server-filesystem /path)',
     default: '',
   });
   const args = argsLine.trim() ? argsLine.trim().split(/\s+/) : undefined;
 
-  const wantsEnv = await confirm({ message: 'Ortam değişkeni eklensin mi?', default: false });
-  const env = wantsEnv ? await promptKeyValueLines('KEY=VALUE (boş bırak: bitir)') : undefined;
+  const wantsEnv = await confirm({ message: 'Add environment variables?', default: false });
+  const env = wantsEnv ? await promptKeyValueLines('KEY=VALUE (leave empty to finish)') : undefined;
 
   return { command: command.trim(), args, env };
 }
 
 async function promptHttpServerDef(): Promise<McpServerDef | undefined> {
-  const url = await input({ message: 'Sunucu URL (örn. https://example.com/mcp)' });
+  const url = await input({ message: 'Server URL (e.g. https://example.com/mcp)' });
   if (!url.trim()) {
-    console.log(chalk.yellow('URL boş; eklenmedi.'));
+    console.log(chalk.yellow('URL is empty; not added.'));
     return undefined;
   }
 
-  const wantsHeaders = await confirm({ message: 'Header eklensin mi (örn. Authorization)?', default: false });
+  const wantsHeaders = await confirm({ message: 'Add headers (e.g. Authorization)?', default: false });
   const headers = wantsHeaders
-    ? await promptKeyValueLines('HEADER=VALUE (boş bırak: bitir)')
+    ? await promptKeyValueLines('HEADER=VALUE (leave empty to finish)')
     : undefined;
 
   return { url: url.trim(), headers };
@@ -116,15 +116,15 @@ async function promptHttpServerDef(): Promise<McpServerDef | undefined> {
 export async function addMcpServerInteractive(ctx: McpPanelContext, id: string): Promise<boolean> {
   const trimmedId = id.trim();
   if (!trimmedId) {
-    console.log(chalk.yellow('Sunucu id boş olamaz.'));
+    console.log(chalk.yellow('Server id cannot be empty.'));
     return false;
   }
 
   const transport = await select({
-    message: 'Transport türü',
+    message: 'Transport type',
     choices: [
-      { name: 'stdio — yerel komut (npx/node ile çalışan sunucu)', value: 'stdio' },
-      { name: 'http — uzak sunucu URL (Streamable HTTP)', value: 'http' },
+      { name: 'stdio — local command (server via npx/node)', value: 'stdio' },
+      { name: 'http — remote server URL (Streamable HTTP)', value: 'http' },
     ],
   });
 
@@ -134,7 +134,7 @@ export async function addMcpServerInteractive(ctx: McpPanelContext, id: string):
   addMcpServer(trimmedId, def);
   await reloadMcpServers(ctx);
 
-  console.log(chalk.green(`${trimmedId} eklendi.`));
+  console.log(chalk.green(`${trimmedId} added.`));
   return true;
 }
 
@@ -142,12 +142,12 @@ export async function removeMcpServerCommand(ctx: McpPanelContext, id: string): 
   const trimmedId = id.trim();
   const removed = removeMcpServer(trimmedId);
   if (!removed) {
-    console.log(chalk.yellow(`Sunucu bulunamadı: ${trimmedId}`));
+    console.log(chalk.yellow(`Server not found: ${trimmedId}`));
     return false;
   }
   await mcpClientManager.disconnect(trimmedId);
   await reloadMcpServers(ctx);
-  console.log(chalk.green(`${trimmedId} kaldırıldı.`));
+  console.log(chalk.green(`${trimmedId} removed.`));
   return true;
 }
 
@@ -159,11 +159,11 @@ export async function setMcpServerEnabledCommand(
   const trimmedId = id.trim();
   const updated = setMcpServerDisabled(trimmedId, disabled);
   if (!updated) {
-    console.log(chalk.yellow(`Sunucu bulunamadı: ${trimmedId}`));
+    console.log(chalk.yellow(`Server not found: ${trimmedId}`));
     return false;
   }
   await reloadMcpServers(ctx);
-  console.log(chalk.green(`${trimmedId} ${disabled ? 'devre dışı bırakıldı' : 'etkinleştirildi'}.`));
+  console.log(chalk.green(`${trimmedId} ${disabled ? 'disabled' : 'enabled'}.`));
   return true;
 }
 
@@ -171,9 +171,9 @@ async function runServerAction(ctx: McpPanelContext, id: string): Promise<void> 
   const action = await select({
     message: id,
     choices: [
-      { name: 'Etkinleştir/Devre dışı bırak', value: 'toggle' },
-      { name: 'Kaldır', value: 'remove' },
-      { name: 'Geri', value: 'back' },
+      { name: 'Enable/Disable', value: 'toggle' },
+      { name: 'Remove', value: 'remove' },
+      { name: 'Back', value: 'back' },
     ],
   });
 
@@ -191,19 +191,17 @@ async function runServerAction(ctx: McpPanelContext, id: string): Promise<void> 
 
 export async function runMcpPanel(ctx: McpPanelContext): Promise<void> {
   try {
+    printMcpList();
     while (true) {
-      printMcpList();
-      console.log();
-
       const servers = listMcpServers();
       const choice = await select({
-        message: 'İşlem seç',
+        message: 'MCP action',
         choices: [
           ...servers.map(({ id }) => ({ name: id, value: id })),
-          { name: '── Sunucu ekle', value: ADD_CHOICE },
-          { name: '── Yeniden bağlan', value: RELOAD_CHOICE },
-          { name: '── Yol göster', value: PATH_CHOICE },
-          { name: '── Çık', value: EXIT_CHOICE },
+          { name: '── Add server', value: ADD_CHOICE },
+          { name: '── Reconnect', value: RELOAD_CHOICE },
+          { name: '── Show path', value: PATH_CHOICE },
+          { name: '── Exit', value: EXIT_CHOICE },
         ],
       });
 
@@ -214,16 +212,19 @@ export async function runMcpPanel(ctx: McpPanelContext): Promise<void> {
       }
       if (choice === RELOAD_CHOICE) {
         await reloadMcpServers(ctx);
-        console.log(chalk.green('MCP sunucuları yeniden bağlandı.'));
+        console.log(chalk.green('MCP servers reconnected.'));
+        printMcpList();
         continue;
       }
       if (choice === ADD_CHOICE) {
-        const id = await input({ message: 'Sunucu id' });
+        const id = await input({ message: 'Server id' });
         await addMcpServerInteractive(ctx, id);
+        printMcpList();
         continue;
       }
 
       await runServerAction(ctx, choice);
+      printMcpList();
     }
   } catch (error: unknown) {
     if (isPromptCancelled(error)) return;
@@ -246,7 +247,7 @@ export async function handleMcpCommand(text: string, ctx: McpPanelContext): Prom
 
   if (text === '/mcp reload') {
     await reloadMcpServers(ctx);
-    console.log(chalk.green('MCP sunucuları yeniden bağlandı.'));
+    console.log(chalk.green('MCP servers reconnected.'));
     return true;
   }
 
@@ -277,7 +278,7 @@ export async function handleMcpCommand(text: string, ctx: McpPanelContext): Prom
   if (text.startsWith('/mcp ')) {
     console.log(
       chalk.yellow(
-        'Kullanım: /mcp list | path | reload | add <id> (stdio veya http seçilir) | remove <id> | enable <id> | disable <id>'
+        'Usage: /mcp list | path | reload | add <id> (stdio or http) | remove <id> | enable <id> | disable <id>'
       )
     );
     return true;

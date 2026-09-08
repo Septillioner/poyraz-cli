@@ -31,8 +31,13 @@ MCP tools are available in **agent** mode; other modes filter them out unless a 
 
 Keyboard cycle (same order as above):
 
-- **Unix / WSL:** Shift+Tab  
-- **Windows Console:** Tab / Shift+Tab, or Ctrl+Shift+M  
+- **Shift+Tab** on platforms that emit CSI Z / shift+tab
+- **Alt+M** as a secondary shortcut (meta / Esc+m)
+- Or `/mode` / `/mode <name>`
+
+Mode changes print a short `Mode → …` toast (including keyboard cycle).
+
+**Tab** completes slash commands and subcommands (for example `/mo` cycles `/mode` / `/model` / `/mcp`; `/model li` → `/model list`). It does not change mode.
 
 Mode is persisted in session prefs (`lastMode`).
 
@@ -70,6 +75,26 @@ Search by namespace-style queries (for example provider-qualified ids). Empty qu
 For OpenRouter, a leading `free` / `premium` token on the model part is stripped when parsing. The chosen profile is saved as `lastModelProfile`.
 
 Startup model selection (CLI / env / prefs): [CLI invocation](cli.md).
+
+## Subagent delegation
+
+Configure a cheaper child model from the REPL:
+
+```text
+/model subagent
+/model subagent gpt-4o-mini
+/model subagent clear
+```
+
+That writes `SUBAGENT_MODEL` to `~/.poyraz/.env` and calls `agent.syncDelegationTool()` so `delegate_task` appears/disappears without restart. You can still set the env var manually.
+
+When set, the parent agent in **agent** mode may call `delegate_task` to run a read-only research subagent with an isolated context. The child cannot edit files or run shell commands.
+
+Delegation is **non-blocking**: at most one background job runs at a time; the parent continues other tools/rounds. When the child finishes, findings are injected automatically (same turn if the parent was waiting to finalize, otherwise on the next round). A second concurrent `delegate_task` is rejected. The prompt shows `subagent Ns` while a job is running; `/verbose on` also prints child tool lines (`↳ [tool] …`).
+
+`/model subagent clear` disables `delegate_task` and cancels any active background job.
+
+If `SUBAGENT_MODEL` is unset, `delegate_task` is not available.
 
 ## Usage and todos
 

@@ -1,43 +1,53 @@
-import * as readline from 'readline';
-import chalk from 'chalk';
+import type { ReplSurface } from './repl-surface.js';
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
+/**
+ * Calm status label above transcript writes (no 90ms spinner redraw).
+ */
 export class ReplStatusLine {
-  private interval?: ReturnType<typeof setInterval>;
-  private label = '';
-  private frame = 0;
-  private visible = false;
+  private parentLabel = '';
+  private subagentLabel = '';
+
+  constructor(private readonly surface: ReplSurface) {}
 
   start(label: string): void {
-    this.stop();
-    this.label = label;
-    this.frame = 0;
-    this.render();
-    this.interval = setInterval(() => {
-      this.frame = (this.frame + 1) % SPINNER_FRAMES.length;
-      this.render();
-    }, 90);
+    this.parentLabel = label.trim();
+    this.push();
+  }
+
+  setSubagentLabel(label: string | undefined): void {
+    this.subagentLabel = label?.trim() ?? '';
+    this.push();
+  }
+
+  clearParent(): void {
+    this.parentLabel = '';
+    this.push();
   }
 
   stop(): void {
-    if (this.interval !== undefined) {
-      clearInterval(this.interval);
-      this.interval = undefined;
-    }
-    if (this.visible) {
-      readline.clearLine(process.stdout, 0);
-      readline.cursorTo(process.stdout, 0);
-      this.visible = false;
-    }
+    this.parentLabel = '';
+    this.push();
   }
 
-  private render(): void {
-    readline.clearLine(process.stdout, 0);
-    readline.cursorTo(process.stdout, 0);
-    process.stdout.write(
-      chalk.cyan(`  ${SPINNER_FRAMES[this.frame]} ${this.label}...`)
-    );
-    this.visible = true;
+  stopAll(): void {
+    this.parentLabel = '';
+    this.subagentLabel = '';
+    this.surface.clearStatus();
+  }
+
+  private composedLabel(): string {
+    if (this.parentLabel && this.subagentLabel) {
+      return `${this.parentLabel} · ${this.subagentLabel}`;
+    }
+    return this.parentLabel || this.subagentLabel;
+  }
+
+  private push(): void {
+    const label = this.composedLabel();
+    if (!label) {
+      this.surface.clearStatus();
+      return;
+    }
+    this.surface.setStatus(label);
   }
 }

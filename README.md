@@ -48,17 +48,22 @@ poyraz --model gpt-4o-mini # pick a model at startup
 
 | Command | Description |
 |---------|-------------|
+| `/help` | Command and keyboard help |
 | `/auth` | Manage API keys / Ollama host (`~/.poyraz/.env`) |
 | `/model` | Interactive model picker |
+| `/model subagent` | Pick/clear cheaper model for `delegate_task` |
 | `/mode` | Interactive mode picker (agent / plan / ask / chat) |
 | `/mcp` | Manage MCP servers (`~/.poyraz/mcp.json`) |
-| `/todo`, `/todos` | Show session todos |
-| `/usage`, `/stats` | Token and context usage |
-| `/bye`, `/exit`, `/quit` | Exit (also bare `exit` / `quit`) |
+| `/todo` | Show session todos |
+| `/usage` | Token and context usage |
+| `/verbose on\|off` | Toggle detailed stream output (reasoning + child tool traces) |
+| `/bye` | Exit |
+
+Aliases still work but are hidden from help/Tab: `/todos`, `/stats`, `/exit`, `/quit`.
 
 Bare `/auth`, `/model`, `/mode`, and `/mcp` open interactive panels. Subcommands are documented in [Commands](docs/commands.md).
 
-**Shortcuts:** Shift+Tab cycles mode on Unix/WSL; on Windows Console use Tab / Shift+Tab or Ctrl+Shift+M. Ctrl+C aborts an in-flight reply.
+**Shortcuts:** Shift+Tab or Alt+M cycles mode. Tab completes slash commands and subcommands. ↑/↓ history. Esc clears the draft. Ctrl+C clears the draft (press again within 2s to exit); while streaming it aborts the reply and cancels an active background subagent.
 
 ## Building from source
 

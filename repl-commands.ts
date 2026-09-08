@@ -19,10 +19,15 @@ import {
   groupOpenRouterByTier,
   listAggregatedChatModels,
   listChatModelsEnvFromProcess,
+  readSubagentModelId,
   resolveAgentMode,
+  resolvePoyrazEnvPath,
   rowToModelProfile,
   saveLastMode,
   saveLastModelProfile,
+  setEnvVar,
+  SUBAGENT_MODEL_ENV,
+  unsetEnvVar,
   type AgentMode,
   type ListedChatModelRow,
   type ModelProfile,
@@ -30,6 +35,13 @@ import {
 } from 'poyraz';
 import { handleAuthCommand, type AuthPanelContext } from './repl-auth.js';
 import { handleMcpCommand } from './repl-mcp.js';
+import { REPL_PRIMARY_COMMANDS } from './repl-autocomplete.js';
+
+export {
+  REPL_COMMANDS,
+  REPL_PRIMARY_COMMANDS,
+  REPL_COMMAND_ALIASES,
+} from './repl-autocomplete.js';
 
 const MODEL_PROVIDER_TOKENS = ['ollama', 'openai', 'groq', 'gemini', 'openrouter'] as const;
 const OPENROUTER_TIER_ORDER: OpenRouterTier[] = ['free', 'premium'];
@@ -84,27 +96,13 @@ function printOpenRouterTierRows(
     }
     const more = tierRows.length - shown.length;
     if (more > 0) {
-      console.log(chalk.gray(`${indent}  ... +${more} daha`));
+      console.log(chalk.gray(`${indent}  ... +${more} more`));
     }
   }
 }
 
-export const REPL_COMMANDS = [
-  '/auth',
-  '/mode',
-  '/model',
-  '/mcp',
-  '/todo',
-  '/todos',
-  '/usage',
-  '/stats',
-  '/bye',
-  '/exit',
-  '/quit',
-] as const;
-
 export function formatReplCommandHint(): string {
-  return REPL_COMMANDS.join(', ');
+  return REPL_PRIMARY_COMMANDS.join(', ');
 }
 
 export interface ReplCommandContext {
@@ -184,11 +182,12 @@ export async function printUsage(agent: Agent): Promise<void> {
   printSection('Model');
   printLine(formatModelLabel(profile, row?.tier));
   printField('Host:', profile.host);
+  printField('Subagent:', readSubagentModelId() ?? '(off)');
 
   const mode = agent.getMode();
   printSection('Mode');
   printField('Active:', `${AGENT_MODES[mode].label} (${mode})`);
-  printField('Tools:', agent.getTools().join(', ') || '(yok)');
+  printField('Tools:', agent.getTools().join(', ') || '(none)');
 
   printSection('Context');
   printFieldParts('Tokens:', [
@@ -224,8 +223,8 @@ export async function printModelInfo(agent: Agent, modelId?: string): Promise<vo
     : await fetchModelInfo(agent.getModelProfile(), env);
 
   if (!info) {
-    console.log(chalk.red(`Model bulunamadı: ${modelId}`));
-    printHint('Kullanılabilir modeller için: /model list');
+    console.log(chalk.red(`Model not found: ${modelId}`));
+    printHint('List models with: /model list');
     return;
   }
 
@@ -259,7 +258,7 @@ export async function printModelInfo(agent: Agent, modelId?: string): Promise<vo
     printField('About:', desc);
   }
   if (info.limitedMetadata) {
-    printHint('(Ek provider metadata mevcut degil)');
+    printHint('(Additional provider metadata is unavailable)');
   }
 
   if (!modelId) {
@@ -285,7 +284,7 @@ function printModelGroupRows(
   }
   const more = rows.length - shown.length;
   if (more > 0) {
-    console.log(chalk.gray(`${indent}... +${more} daha`));
+    console.log(chalk.gray(`${indent}... +${more} more`));
   }
 }
 
@@ -293,7 +292,7 @@ export async function printModelList(): Promise<void> {
   const models = await listAggregatedChatModels(listChatModelsEnvFromProcess());
 
   if (models.length === 0) {
-    console.log(chalk.yellow('Kullanılabilir model bulunamadı.'));
+    console.log(chalk.yellow('No models available.'));
     return;
   }
 
@@ -301,13 +300,13 @@ export async function printModelList(): Promise<void> {
   const breakdown = [...groups]
     .map(([provider, rows]) => `${formatProviderLabel(provider)}: ${rows.length}`)
     .join(', ');
-  console.log(chalk.white(`Toplam: ${models.length} model (${breakdown})`));
+  console.log(chalk.white(`Total: ${models.length} models (${breakdown})`));
   console.log();
 
   for (const [provider, rows] of groups) {
     const host = rows[0]?.host ?? '';
     console.log(
-      chalk.cyan(`${formatProviderLabel(provider)} (${host}) — ${rows.length} model`)
+      chalk.cyan(`${formatProviderLabel(provider)} (${host}) — ${rows.length} models`)
     );
     if (provider === 'openrouter') {
       printOpenRouterTierRows(rows, '  ', MODEL_LIST_GROUP_LIMIT);
@@ -318,6 +317,16 @@ export async function printModelList(): Promise<void> {
 }
 
 function commitModelSwitch(ctx: ReplCommandContext, profile: ModelProfile): boolean {
+  const current = ctx.agent.getModelProfile();
+  if (current.model === profile.model && current.provider === profile.provider) {
+    console.log(
+      chalk.gray(
+        `Already using ${profile.model} (${formatProviderLabel(profile.provider)})`
+      )
+    );
+    return true;
+  }
+
   ctx.agent.setModelProfile(profile);
   saveLastModelProfile(profile);
   ctx.onModelChange?.(profile);
@@ -325,7 +334,7 @@ function commitModelSwitch(ctx: ReplCommandContext, profile: ModelProfile): bool
 
   console.log(
     chalk.green(
-      `Model değiştirildi: ${profile.model} (${formatProviderLabel(profile.provider)})`
+      `Model → ${profile.model} (${formatProviderLabel(profile.provider)})`
     )
   );
   return true;
@@ -339,9 +348,9 @@ export function switchModelFromRow(
 }
 
 export function printModeList(agentMode?: AgentMode): void {
-  printSection('Agent modlari');
+  printSection('Agent modes');
   for (const def of Object.values(AGENT_MODES)) {
-    const active = agentMode === def.id ? chalk.green(' (aktif)') : '';
+    const active = agentMode === def.id ? chalk.green(' (active)') : '';
     console.log(
       `  ${chalk.cyan(def.label.padEnd(8))}${chalk.gray(def.id.padEnd(8))}${def.description}${active}`
     );
@@ -371,7 +380,7 @@ async function printTodoHandoffHint(agent: Agent, mode: AgentMode): Promise<void
     if (snapshot.totalCount === 0) return;
     console.log(
       chalk.cyan(
-        `  Ayni oturumdaki plan devam edecek (${formatTodoProgressSummary(snapshot)}):`
+        `  Continuing the current plan (${formatTodoProgressSummary(snapshot)}):`
       )
     );
     console.log(chalk.white(formatTodoTable(snapshot)));
@@ -381,10 +390,13 @@ async function printTodoHandoffHint(agent: Agent, mode: AgentMode): Promise<void
 }
 
 export function switchAgentMode(ctx: ReplCommandContext, mode: AgentMode): boolean {
+  const current = ctx.agent.getMode();
+  if (current === mode) {
+    console.log(chalk.gray(`Already in ${AGENT_MODES[mode].label} mode`));
+    return true;
+  }
   switchAgentModeQuiet(ctx, mode);
-  console.log(
-    chalk.green(`Mod degistirildi: ${AGENT_MODES[mode].label} (${mode})`)
-  );
+  console.log(chalk.green(`Mode → ${AGENT_MODES[mode].label}`));
   void printTodoHandoffHint(ctx.agent, mode);
   return true;
 }
@@ -397,12 +409,118 @@ export async function switchModel(
 
   const profile = findModelProfile(modelId, models);
   if (!profile) {
-    console.log(chalk.red(`Model bulunamadı: ${modelId}`));
-    console.log(chalk.gray('Kullanılabilir modeller için: /model list'));
+    console.log(chalk.red(`Model not found: ${modelId}`));
+    console.log(chalk.gray('List models with: /model list'));
     return false;
   }
 
   return commitModelSwitch(ctx, profile);
+}
+
+export function printSubagentModel(): void {
+  const current = readSubagentModelId();
+  printSection('Subagent model');
+  printField('Model:', current ?? '(off)');
+  printField('ENV:', SUBAGENT_MODEL_ENV);
+  printField('File:', resolvePoyrazEnvPath());
+  if (!current) {
+    printHint('Set with /model subagent, or /model subagent <id>');
+  }
+}
+
+export function setSubagentModel(ctx: ReplCommandContext, modelId: string): boolean {
+  const trimmed = modelId.trim();
+  if (!trimmed) {
+    console.log(chalk.yellow('Usage: /model subagent <id> | <provider> <id>'));
+    return false;
+  }
+
+  const current = readSubagentModelId();
+  if (current === trimmed) {
+    console.log(chalk.gray(`Subagent model already set to ${trimmed}`));
+    return true;
+  }
+
+  setEnvVar(resolvePoyrazEnvPath(), SUBAGENT_MODEL_ENV, trimmed);
+  process.env[SUBAGENT_MODEL_ENV] = trimmed;
+  ctx.agent.syncDelegationTool();
+  console.log(chalk.green(`Subagent model → ${trimmed}`));
+  return true;
+}
+
+export function clearSubagentModel(ctx: ReplCommandContext): boolean {
+  const current = readSubagentModelId();
+  if (!current) {
+    console.log(chalk.gray('Subagent model already cleared (delegate_task disabled)'));
+    return true;
+  }
+
+  unsetEnvVar(resolvePoyrazEnvPath(), SUBAGENT_MODEL_ENV);
+  delete process.env[SUBAGENT_MODEL_ENV];
+  ctx.agent.syncDelegationTool();
+  console.log(chalk.green('Subagent model cleared (delegate_task disabled)'));
+  return true;
+}
+
+export async function switchSubagentModel(
+  ctx: ReplCommandContext,
+  modelId: string
+): Promise<boolean> {
+  const models = await listAggregatedChatModels(listChatModelsEnvFromProcess());
+  const profile = findModelProfile(modelId, models);
+  if (!profile) {
+    console.log(chalk.red(`Model not found: ${modelId}`));
+    console.log(chalk.gray('List models with: /model list'));
+    return false;
+  }
+  return setSubagentModel(ctx, profile.model);
+}
+
+export function switchSubagentModelFromRow(
+  ctx: ReplCommandContext,
+  row: ListedChatModelRow
+): boolean {
+  return setSubagentModel(ctx, row.id);
+}
+
+function looksLikeModelSubcommandTypo(args: string): boolean {
+  const token = args.trim().toLowerCase();
+  if (!token || token.includes(' ')) return false;
+  const known = ['list', 'info', 'subagent'];
+  return known.some((item) => {
+    if (token === item) return false;
+    if (Math.abs(token.length - item.length) > 2) return false;
+    let distance = 0;
+    const max = Math.max(token.length, item.length);
+    for (let i = 0; i < max; i++) {
+      if (token[i] !== item[i]) distance += 1;
+    }
+    return distance > 0 && distance <= 2;
+  });
+}
+
+async function handleModelSubagentCommand(
+  args: string,
+  ctx: AuthPanelContext
+): Promise<boolean> {
+  const rest = args.slice('subagent'.length).trim();
+  if (!rest) {
+    // Bare `/model subagent` is handled by the router (picker).
+    return false;
+  }
+
+  const lower = rest.toLowerCase();
+  if (lower === 'clear' || lower === 'unset') {
+    clearSubagentModel(ctx);
+    return true;
+  }
+  if (lower === 'show' || lower === 'status') {
+    printSubagentModel();
+    return true;
+  }
+
+  await switchSubagentModel(ctx, resolveModelIdFromCommandArgs(rest));
+  return true;
 }
 
 export async function handleReplCommand(
@@ -435,13 +553,13 @@ export async function handleReplCommand(
   if (text.startsWith('/mode ')) {
     const modeToken = text.slice('/mode '.length).trim().toLowerCase();
     if (!modeToken) {
-      console.log(chalk.yellow('Kullanim: /mode list | agent | plan | ask | chat'));
+      console.log(chalk.yellow('Usage: /mode list | agent | plan | ask | chat'));
       return true;
     }
     const mode = resolveAgentMode(modeToken);
     if (!mode) {
-      console.log(chalk.red(`Bilinmeyen mod: ${modeToken}`));
-      printHint('Modlar: agent, plan, ask, chat');
+      console.log(chalk.red(`Unknown mode: ${modeToken}`));
+      printHint('Modes: agent, plan, ask, chat');
       return true;
     }
     switchAgentMode(ctx, mode);
@@ -458,7 +576,7 @@ export async function handleReplCommand(
     if (!args) {
       console.log(
         chalk.yellow(
-          'Kullanım: /model list | info | <provider> <id> | <id>'
+          'Usage: /model list | info | subagent | <provider> <id> | <id>'
         )
       );
       return true;
@@ -474,6 +592,17 @@ export async function handleReplCommand(
     if (args.startsWith('info ')) {
       const modelId = resolveModelIdFromCommandArgs(args.slice('info '.length));
       await printModelInfo(ctx.agent, modelId);
+      return true;
+    }
+    if (args === 'subagent' || args.startsWith('subagent ')) {
+      return handleModelSubagentCommand(args, ctx);
+    }
+    if (looksLikeModelSubcommandTypo(args)) {
+      console.log(
+        chalk.yellow(
+          'Usage: /model list | info | subagent | <provider> <id> | <id>'
+        )
+      );
       return true;
     }
     await switchModel(ctx, resolveModelIdFromCommandArgs(args));

@@ -1,36 +1,30 @@
-import chalk from 'chalk';
 import {
   Agent,
   AgentStreamEvent,
-  applyStreamEvent,
   ChatAbortedError,
   createActivityTracker,
-  formatProviderLabel,
-  formatTodoTable,
-  getLifecycleLabel,
   mcpClientManager,
   nextAgentMode,
+  AGENT_MODES,
   type ListedChatModelRow,
-  type ToolActivityView,
-  stripMarkersFromCodeEdit,
 } from 'poyraz';
-import { renderEditFrame } from './repl-edit-frame.js';
-import {
-  formatReplCommandHint,
-  handleReplCommand,
-  switchAgentModeQuiet,
-  type ReplCommandContext,
-} from './repl-commands.js';
-import { runAuthPanel } from './repl-auth.js';
-import { runMcpPanel } from './repl-mcp.js';
-import { buildInputMessage, isExitCommand, isPromptCancelled, replInputTheme } from './repl-input.js';
-import replMainInput from './repl-main-input.js';
-import { modeCycleHint } from './repl-terminal.js';
-import { runModePicker } from './repl-mode-picker.js';
-import { runModelPicker } from './repl-model-picker.js';
+import { printReplBanner } from './repl-banner.js';
+import { switchAgentModeQuiet, type ReplCommandContext } from './repl-commands.js';
+import { buildInputMessage, isExitCommand } from './repl-input.js';
+import { ReplExitRequest, ReplLineEditor } from './repl-line-editor.js';
 import { prefetchModels, refreshModels } from './repl-models.js';
-import { printHint } from './repl-theme.js';
+import {
+  createStreamOutputState,
+  finalizeStreamOutput,
+  handleStreamEvent,
+  handleSubagentUiEvent,
+} from './repl-output.js';
+import { dispatchReplCommand } from './repl-router.js';
 import { ReplStatusLine } from './repl-status.js';
+import { ReplSubagentStatus } from './repl-subagent-status.js';
+import { ReplSurface } from './repl-surface.js';
+import { showModeToast } from './repl-toast.js';
+import { theme } from './repl-theme.js';
 
 type ReplContext = ReplCommandContext & {
   getModelRows: () => ListedChatModelRow[];
@@ -43,20 +37,40 @@ export class ChatRepl {
   private exiting = false;
   private modelRows: ListedChatModelRow[] = [];
   private chatAbort?: AbortController;
-  private statusLine = new ReplStatusLine();
+  private surface = new ReplSurface();
+  private statusLine = new ReplStatusLine(this.surface);
+  private subagentStatus = new ReplSubagentStatus();
+  private unsubscribeSubagent?: () => void;
   private chatSigIntHandler?: () => void;
+  private verbose = false;
+  private editor: ReplLineEditor;
 
-  constructor(private agent: Agent) {}
+  constructor(private agent: Agent) {
+    this.editor = new ReplLineEditor({
+      surface: this.surface,
+      getPrompt: () =>
+        buildInputMessage(this.agent, this.subagentStatus.promptSuffix()),
+      onModeCycle: () => {
+        const next = nextAgentMode(this.agent.getMode());
+        if (this.agent.getMode() === next) return;
+        switchAgentModeQuiet(this.commandContext(), next);
+        showModeToast(this.surface, AGENT_MODES[next].label);
+      },
+    });
+  }
 
   private commandContext(): ReplContext {
     return {
       agent: this.agent,
       getModelRows: () => this.modelRows,
       onModelsRefreshed: () => refreshModels(this.modelRows),
+      onModeChanged: () => this.editor.refreshPrompt(),
+      onModelChange: () => this.editor.refreshPrompt(),
       onAuthChanged: async () => {
         const profile = this.agent.getModelProfile();
         this.agent.setModelProfile(profile);
         await refreshModels(this.modelRows);
+        this.editor.refreshPrompt();
       },
       onMcpChanged: async () => {
         this.agent.removeExternalTools();
@@ -67,23 +81,36 @@ export class ChatRepl {
   }
 
   async start(): Promise<void> {
-    this.printBanner();
+    const mcpConnected = mcpClientManager
+      .listStates()
+      .filter((state) => state.status === 'connected').length;
+    printReplBanner(this.agent, mcpConnected);
     void prefetchModels(this.modelRows).catch(() => {});
+
+    this.subagentStatus.setOnChange(() => {
+      if (!this.busy) this.editor.refreshPrompt();
+      else this.statusLine.setSubagentLabel(this.subagentStatus.statusLabel());
+    });
+    this.subagentStatus.syncFromSnapshot(this.agent.getSubagentJobStatus());
+    this.unsubscribeSubagent = this.agent.subscribeSubagentEvents((event) => {
+      handleSubagentUiEvent(event, {
+        verbose: this.verbose,
+        statusLine: this.statusLine,
+        surface: this.surface,
+        subagentStatus: this.subagentStatus,
+        showStatusLine: this.busy,
+        onIdleChange: () => {
+          if (!this.busy) this.editor.refreshPrompt();
+        },
+      });
+    });
 
     while (!this.exiting) {
       let text: string;
       try {
-        text = await replMainInput({
-          message: buildInputMessage(this.agent),
-          theme: replInputTheme,
-          onModeCycle: () => {
-            const next = nextAgentMode(this.agent.getMode());
-            switchAgentModeQuiet(this.commandContext(), next);
-            return buildInputMessage(this.agent);
-          },
-        });
+        text = await this.editor.readLine();
       } catch (error: unknown) {
-        if (isPromptCancelled(error)) {
+        if (error instanceof ReplExitRequest) {
           await this.close();
           return;
         }
@@ -92,6 +119,9 @@ export class ChatRepl {
 
       const trimmed = text.trim();
       if (!trimmed) continue;
+
+      this.editor.pushHistory(trimmed);
+
       if (isExitCommand(trimmed)) {
         await this.close();
         return;
@@ -107,71 +137,31 @@ export class ChatRepl {
 
   private async runCommand(text: string): Promise<void> {
     try {
-      if (text === '/model') {
-        await runModelPicker(this.commandContext());
-        return;
-      }
-
-      if (text === '/auth') {
-        await runAuthPanel(this.commandContext());
-        return;
-      }
-
-      if (text === '/mode') {
-        await runModePicker(this.commandContext());
-        return;
-      }
-
-      if (text === '/mcp') {
-        await runMcpPanel(this.commandContext());
-        return;
-      }
-
-      const handled = await handleReplCommand(text, this.commandContext());
-      if (!handled) {
-        console.log(chalk.yellow(`Bilinmeyen komut: ${text}`));
-        printHint(`Komutlar: ${formatReplCommandHint()}`);
-      }
+      await dispatchReplCommand(text, {
+        ...this.commandContext(),
+        verbose: this.verbose,
+        setVerbose: (value) => {
+          this.verbose = value;
+        },
+        pauseEditor: () => this.editor.pause(),
+        resumeEditor: () => this.editor.resume(),
+        surface: this.surface,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error(chalk.red(`\nHata: ${message}`));
+      this.surface.writeLine(theme.error(`Error: ${message}`));
     }
-  }
-
-  private printBanner(): void {
-    const tools = this.agent.getTools();
-    const profile = this.agent.getModelProfile();
-
-    console.log(chalk.cyan('─'.repeat(50)));
-    console.log(
-      chalk.bold.white(`Template: ${this.agent.getName()}`),
-      chalk.white(`| Model: ${profile.model} (${formatProviderLabel(profile.provider)})`)
-    );
-    if (tools.length) {
-      console.log(chalk.white(`Tools: ${tools.join(', ')}`));
-    }
-    console.log(
-      chalk.white(
-        `Komutlar: ${formatReplCommandHint()} — ${modeCycleHint()} · /model · Ctrl+C iptal · /bye cikis`
-      )
-    );
-    console.log(
-      chalk.white('/auth — API anahtarlari (~/.poyraz) · /mode — mod secici · /model — model secici')
-    );
-    console.log(chalk.white('/mcp — custom MCP sunucu yonetimi (~/.poyraz/mcp.json)'));
-    console.log(chalk.white('/model <provider> <id> — dogrudan model degistir'));
-    console.log(chalk.cyan('─'.repeat(50)));
   }
 
   private abortActiveChat(): void {
     if (!this.busy) return;
     if (this.abortRequested) {
-      this.statusLine.stop();
+      this.statusLine.clearParent();
       return;
     }
     this.abortRequested = true;
-    process.stdout.write('\n');
-    this.statusLine.stop();
+    this.statusLine.clearParent();
+    this.agent.cancelActiveSubagent('interrupted by user');
     this.chatAbort?.abort();
   }
 
@@ -187,7 +177,9 @@ export class ChatRepl {
           reject(new ChatAbortedError());
           return;
         }
-        signal.addEventListener('abort', () => reject(new ChatAbortedError()), { once: true });
+        signal.addEventListener('abort', () => reject(new ChatAbortedError()), {
+          once: true,
+        });
       }),
     ]);
   }
@@ -209,36 +201,18 @@ export class ChatRepl {
   private async close(): Promise<void> {
     if (this.exiting) return;
     this.exiting = true;
-    console.log(chalk.white('\nGörüşmek üzere.'));
+    this.unsubscribeSubagent?.();
+    this.unsubscribeSubagent = undefined;
+    this.subagentStatus.clear();
+    this.statusLine.stopAll();
+    this.surface.dispose();
+    if (this.agent.getSubagentJobStatus()?.status === 'running') {
+      this.agent.cancelActiveSubagent('repl exit');
+    }
+    this.editor.close();
+    console.log(theme.meta('Goodbye.'));
     await mcpClientManager.disconnectAll().catch(() => {});
     process.exit(0);
-  }
-
-  private printEditFrame(view: ToolActivityView): void {
-    const codeEdit = view.args?.code_edit;
-    const targetFile = view.args?.target_file;
-    if (typeof codeEdit !== 'string' || typeof targetFile !== 'string') return;
-
-    const code = stripMarkersFromCodeEdit(codeEdit);
-    if (!code.trim()) return;
-
-    const ranges =
-      (view.resultMeta?.changed_ranges as
-        | Array<{ start_line: number; lines_added: number; lines_removed: number }>
-        | undefined) ?? [];
-    const hasRanges = ranges.length > 0;
-    const linesAdded = ranges.reduce((sum, r) => sum + r.lines_added, 0);
-    const linesRemoved = ranges.reduce((sum, r) => sum + r.lines_removed, 0);
-
-    console.log(
-      renderEditFrame({
-        filePath: targetFile,
-        code,
-        startLine: hasRanges ? ranges[0].start_line : 1,
-        linesAdded: hasRanges ? linesAdded : undefined,
-        linesRemoved: hasRanges ? linesRemoved : undefined,
-      })
-    );
   }
 
   private async handleMessage(text: string): Promise<void> {
@@ -249,143 +223,52 @@ export class ChatRepl {
     this.chatAbort.signal.addEventListener(
       'abort',
       () => {
-        this.statusLine.stop();
+        this.statusLine.clearParent();
       },
       { once: true }
     );
 
-    let fullResponse = '';
-    let isStreaming = false;
-    let isReasoningStreaming = false;
-
-    const clearStatus = () => {
-      this.statusLine.stop();
-    };
-
-    const endReasoningStream = () => {
-      if (!isReasoningStreaming) return;
-      process.stdout.write('\n');
-      isReasoningStreaming = false;
-    };
-
+    const outputState = createStreamOutputState();
+    this.statusLine.setSubagentLabel(this.subagentStatus.statusLabel());
     this.enableChatInterrupt();
-
-    const handleEvent = (event: AgentStreamEvent) => {
-      if (event.type === 'lifecycle') {
-        if (event.phase === 'summarized') {
-          clearStatus();
-          return;
-        }
-        const label = getLifecycleLabel(event.phase);
-        if (label) this.statusLine.start(label);
-        return;
-      }
-
-      if (event.type === 'reasoning.delta') {
-        clearStatus();
-        if (!isReasoningStreaming) {
-          process.stdout.write(chalk.gray('Thinking> '));
-          isReasoningStreaming = true;
-        }
-        process.stdout.write(chalk.gray(event.delta));
-        return;
-      }
-
-      if (event.type === 'text.delta') {
-        clearStatus();
-        endReasoningStream();
-        if (!isStreaming) {
-          process.stdout.write(chalk.magenta('Agent> '));
-          isStreaming = true;
-        }
-        fullResponse += event.delta;
-        process.stdout.write(event.delta);
-        return;
-      }
-
-      const view = applyStreamEvent(this.tracker, event);
-      if (!view) return;
-
-      if (event.type === 'tool.call.start') {
-        clearStatus();
-        endReasoningStream();
-        console.log(chalk.yellow(`\n[tool] ${view.label}${view.detail ? `: ${view.detail}` : ''}`));
-        if (view.toolName === 'edit_file' && view.args) {
-          const instructions = view.args.instructions;
-          if (typeof instructions === 'string' && instructions.trim()) {
-            console.log(chalk.gray(`       instructions: ${instructions}`));
-          }
-        }
-        if (isStreaming) process.stdout.write(chalk.magenta('Agent> '));
-        return;
-      }
-
-      if (event.type === 'tool.call.result') {
-        clearStatus();
-        endReasoningStream();
-        const tag =
-          view.status === 'error'
-            ? chalk.red('[error]')
-            : view.status === 'blocked'
-              ? chalk.yellow('[blocked]')
-              : chalk.green('[ok]');
-        console.log(`\n${tag} ${view.toolName}`);
-        if (view.resultPreview) console.log(chalk.white(`   ${view.resultPreview}`));
-        if (view.status === 'success' && view.toolName === 'todo_write') {
-          console.log(chalk.cyan('\n' + formatTodoTable(this.agent.getCachedTodoSnapshot())));
-        }
-        if (view.status === 'success' && view.toolName === 'edit_file') {
-          this.printEditFrame(view);
-        }
-        if (view.toolName === 'run_terminal_cmd' && typeof view.resultMeta?.cwd === 'string') {
-          console.log(chalk.gray(`   cwd: ${view.resultMeta.cwd}`));
-        }
-        if (isStreaming) process.stdout.write(chalk.magenta('Agent> '));
-      }
-    };
 
     try {
       const result = await this.chatWithAbort(text, {
-        onEvent: handleEvent,
+        onEvent: (event) =>
+          handleStreamEvent(event, outputState, {
+            verbose: this.verbose,
+            statusLine: this.statusLine,
+            surface: this.surface,
+            agent: this.agent,
+            tracker: this.tracker,
+          }),
         signal: this.chatAbort.signal,
       });
 
-      clearStatus();
-      endReasoningStream();
-
-      if (!isStreaming && result.content) {
-        console.log(chalk.magenta('Agent> ') + result.content);
-      } else if (isStreaming) {
-        process.stdout.write('\n');
-      }
-
-      if (result.usage?.totalTokens) {
-        console.log(chalk.cyan(`  (${result.usage.totalTokens} tokens)`));
-      }
-
-      try {
-        const snapshot = await this.agent.getTodoSnapshot();
-        if (snapshot.totalCount > 0) {
-          console.log(chalk.cyan('\n' + formatTodoTable(snapshot)));
-        }
-      } catch {
-        // Non-fatal
-      }
+      this.statusLine.clearParent();
+      const context = this.agent.getContextUsage();
+      finalizeStreamOutput(
+        outputState,
+        this.surface,
+        result.content,
+        result.usage?.totalTokens,
+        context.percentage
+      );
     } catch (error: unknown) {
-      clearStatus();
+      this.statusLine.clearParent();
       if (error instanceof ChatAbortedError) {
-        console.log(chalk.yellow('Yanıt durduruldu.'));
+        this.surface.writeLine(theme.warning('Reply aborted.'));
       } else {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(chalk.red(`\nHata: ${message}`));
+        this.surface.writeLine(theme.error(`Error: ${message}`));
       }
     } finally {
       this.disableChatInterrupt();
-      clearStatus();
+      this.statusLine.setSubagentLabel(undefined);
+      this.statusLine.clearParent();
       this.chatAbort = undefined;
       this.busy = false;
       this.abortRequested = false;
-      console.log();
     }
   }
 }

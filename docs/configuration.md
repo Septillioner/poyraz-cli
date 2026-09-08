@@ -11,6 +11,7 @@ User-facing reference for environment variables and on-disk paths used by **poyr
 | `TEMPLATE_NAME` | Default template if no CLI positional name |
 | `AGENT_NAME` | Alias for `TEMPLATE_NAME` |
 | `DEFAULT_MODEL` | Preferred model when `--model` is omitted |
+| `SUBAGENT_MODEL` | Cheaper model id for `delegate_task` subagents; if unset, delegation is disabled. Prefer setting via `/model subagent` |
 
 ### Providers
 

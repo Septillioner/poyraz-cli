@@ -1,14 +1,18 @@
 import { search } from '@inquirer/prompts';
 import { CancelPromptError, ExitPromptError } from '@inquirer/core';
 import {
-  formatProviderLabel,
   groupModelsByProvider,
   listAggregatedChatModels,
   listChatModelsEnvFromProcess,
+  readSubagentModelId,
   type ListedChatModelRow,
   type ModelProviderKind,
 } from 'poyraz';
-import { switchModelFromRow, type ReplCommandContext } from './repl-commands.js';
+import {
+  switchModelFromRow,
+  switchSubagentModelFromRow,
+  type ReplCommandContext,
+} from './repl-commands.js';
 import {
   compareModelSearchRank,
   formatModelNamespace,
@@ -16,7 +20,7 @@ import {
   modelMatchesNamespaceQuery,
   parseNamespaceQuery,
 } from './repl-model-namespace.js';
-import { printField, printHint, printSection } from './repl-theme.js';
+import { printHint } from './repl-theme.js';
 
 export type ModelPickerContext = ReplCommandContext & {
   getModelRows: () => ListedChatModelRow[];
@@ -89,28 +93,25 @@ function isPickerCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError || error instanceof CancelPromptError;
 }
 
+async function loadPickerRows(ctx: ModelPickerContext): Promise<ListedChatModelRow[]> {
+  let rows = ctx.getModelRows();
+  if (rows.length === 0) {
+    rows = await listAggregatedChatModels(listChatModelsEnvFromProcess());
+  }
+  return rows;
+}
+
 export async function runModelPicker(ctx: ModelPickerContext): Promise<void> {
   try {
-    let rows = ctx.getModelRows();
+    const rows = await loadPickerRows(ctx);
     if (rows.length === 0) {
-      rows = await listAggregatedChatModels(listChatModelsEnvFromProcess());
-    }
-
-    if (rows.length === 0) {
-      printHint('Kullanılabilir model bulunamadı.');
+      printHint('No available models found.');
       return;
     }
 
     const current = ctx.agent.getModelProfile();
-    printSection('Model seç');
-    printField('Aktif:', `${current.model} (${formatProviderLabel(current.provider)})`);
-    printHint(
-      'openai.gpt · openrouter.premium... — yazarak filtrele · ↑↓ gez · Enter seç · Esc iptal'
-    );
-    console.log();
-
     const selected = await search<string>({
-      message: 'Model ara',
+      message: `Model (${current.model})`,
       pageSize: 12,
       source: (term) => {
         const matches = searchModels(term ?? '', rows);
@@ -128,7 +129,42 @@ export async function runModelPicker(ctx: ModelPickerContext): Promise<void> {
     }
   } catch (error: unknown) {
     if (isPickerCancelled(error)) {
-      printHint('Model seçimi iptal edildi.');
+      printHint('Cancelled.');
+      return;
+    }
+    throw error;
+  }
+}
+
+export async function runSubagentModelPicker(ctx: ModelPickerContext): Promise<void> {
+  try {
+    const rows = await loadPickerRows(ctx);
+    if (rows.length === 0) {
+      printHint('No available models found.');
+      return;
+    }
+
+    const current = readSubagentModelId();
+    const selected = await search<string>({
+      message: `Subagent (${current ?? 'off'})`,
+      pageSize: 12,
+      source: (term) => {
+        const matches = searchModels(term ?? '', rows);
+        return matches.map((row) => ({
+          name: formatModelNamespace(row),
+          value: pickerValue(row),
+          description: pickerDescription(row),
+        }));
+      },
+    });
+
+    const row = resolvePickerValue(String(selected), rows);
+    if (row) {
+      switchSubagentModelFromRow(ctx, row);
+    }
+  } catch (error: unknown) {
+    if (isPickerCancelled(error)) {
+      printHint('Cancelled.');
       return;
     }
     throw error;

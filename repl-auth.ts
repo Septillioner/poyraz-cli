@@ -46,32 +46,32 @@ async function reloadAuthInSession(ctx: ReplCommandContext): Promise<void> {
 function formatProviderStatus(def: AuthProviderDef): string {
   const value = readStoredValue(def);
   const masked = maskSecret(value, def.secret);
-  if (!value?.trim()) return chalk.gray('(eksik)');
+  if (!value?.trim()) return chalk.gray('(missing)');
   return chalk.green(masked);
 }
 
 export async function printAuthList(): Promise<void> {
   const envPath = authEnvPath();
-  printSection('API Anahtarları');
-  printField('Dosya:', envPath);
+  printSection('API keys');
+  printField('File:', envPath);
   console.log();
 
   for (const def of AUTH_PROVIDER_DEFS) {
     const value = readStoredValue(def);
     const masked = maskSecret(value, def.secret);
-    const status = value?.trim() ? chalk.green(masked) : chalk.gray('(eksik)');
+    const status = value?.trim() ? chalk.green(masked) : chalk.gray('(missing)');
     console.log(`  ${chalk.cyan(def.label.padEnd(12))}${status}`);
   }
 }
 
 export function printAuthPath(): void {
-  printField('Dosya:', authEnvPath());
+  printField('File:', authEnvPath());
 }
 
 export async function showAuthProvider(providerToken: string): Promise<boolean> {
   const def = resolveAuthProvider(providerToken);
   if (!def) {
-    console.log(chalk.red(`Bilinmeyen provider: ${providerToken}`));
+    console.log(chalk.red(`Unknown provider: ${providerToken}`));
     printHint('Provider: openai, groq, gemini, openrouter, ollama');
     return false;
   }
@@ -79,7 +79,7 @@ export async function showAuthProvider(providerToken: string): Promise<boolean> 
   const value = readStoredValue(def);
   printSection(def.label);
   printField('ENV:', def.envKey);
-  printField('Değer:', maskSecret(value, def.secret));
+  printField('Value:', maskSecret(value, def.secret));
   return true;
 }
 
@@ -90,7 +90,7 @@ export async function setAuthProvider(
 ): Promise<boolean> {
   const def = resolveAuthProvider(providerToken);
   if (!def) {
-    console.log(chalk.red(`Bilinmeyen provider: ${providerToken}`));
+    console.log(chalk.red(`Unknown provider: ${providerToken}`));
     printHint('Provider: openai, groq, gemini, openrouter, ollama');
     return false;
   }
@@ -106,7 +106,7 @@ export async function setAuthProvider(
   }
 
   if (!value?.trim()) {
-    console.log(chalk.yellow('Değer boş; kayıt yapılmadı.'));
+    console.log(chalk.yellow('Value is empty; nothing saved.'));
     return false;
   }
 
@@ -114,7 +114,7 @@ export async function setAuthProvider(
   process.env[def.envKey] = value.trim();
   await reloadAuthInSession(ctx);
 
-  console.log(chalk.green(`${def.label} kaydedildi (${maskSecret(value, def.secret)}).`));
+  console.log(chalk.green(`${def.label} saved (${maskSecret(value, def.secret)}).`));
   return true;
 }
 
@@ -124,14 +124,14 @@ export async function importAuthFromProject(
 ): Promise<boolean> {
   const sourcePaths = collectProjectEnvPaths();
   if (sourcePaths.length === 0) {
-    console.log(chalk.yellow('Proje .env dosyası bulunamadı (cwd → kök).'));
+    console.log(chalk.yellow('No project .env file found (cwd → root).'));
     return false;
   }
 
   const found = collectProjectAuthVars();
   if (found.size === 0) {
-    console.log(chalk.yellow('Proje .env içinde taşınacak API anahtarı yok.'));
-    printHint(`Kaynak: ${sourcePaths.join(', ')}`);
+    console.log(chalk.yellow('No API keys to import in project .env.'));
+    printHint(`Source: ${sourcePaths.join(', ')}`);
     return false;
   }
 
@@ -139,12 +139,12 @@ export async function importAuthFromProject(
   const imported = result.entries.filter((e) => e.action === 'imported');
   const skipped = result.entries.filter((e) => e.action === 'skipped');
 
-  printSection('Proje .env içe aktarma');
-  printField('Kaynak:', sourcePaths[0]);
+  printSection('Import from project .env');
+  printField('Source:', sourcePaths[0]);
   if (sourcePaths.length > 1) {
-    printField('Ek:', `${sourcePaths.length - 1} üst dizin .env`);
+    printField('Extra:', `${sourcePaths.length - 1} parent .env`);
   }
-  printField('Hedef:', authEnvPath());
+  printField('Target:', authEnvPath());
   console.log();
 
   for (const entry of result.entries) {
@@ -153,21 +153,21 @@ export async function importAuthFromProject(
       console.log(`  ${chalk.green('[ok]')} ${chalk.cyan(entry.def.label.padEnd(12))}${masked}`);
     } else if (entry.action === 'skipped') {
       console.log(
-        `  ${chalk.yellow('[atla]')} ${chalk.cyan(entry.def.label.padEnd(12))}${masked} ${chalk.gray('(~/.poyraz zaten dolu)')}`
+        `  ${chalk.yellow('[skip]')} ${chalk.cyan(entry.def.label.padEnd(12))}${masked} ${chalk.gray('(~/.poyraz already set)')}`
       );
     }
   }
 
   if (imported.length === 0 && skipped.length > 0 && !overwrite) {
-    printHint('Üzerine yazmak için: /auth import --overwrite');
+    printHint('To overwrite: /auth import --overwrite');
     return false;
   }
 
   if (imported.length > 0) {
     await reloadAuthInSession(ctx);
-    console.log(chalk.green(`\n${imported.length} anahtar ~/.poyraz/.env dosyasına aktarıldı.`));
+    console.log(chalk.green(`\n${imported.length} key(s) imported to ~/.poyraz/.env.`));
   } else {
-    console.log(chalk.gray('\nYeni aktarım yapılmadı.'));
+    console.log(chalk.gray('\nNothing new imported.'));
   }
 
   return imported.length > 0;
@@ -179,7 +179,7 @@ export async function unsetAuthProvider(
 ): Promise<boolean> {
   const def = resolveAuthProvider(providerToken);
   if (!def) {
-    console.log(chalk.red(`Bilinmeyen provider: ${providerToken}`));
+    console.log(chalk.red(`Unknown provider: ${providerToken}`));
     printHint('Provider: openai, groq, gemini, openrouter, ollama');
     return false;
   }
@@ -189,9 +189,9 @@ export async function unsetAuthProvider(
   await reloadAuthInSession(ctx);
 
   if (removed) {
-    console.log(chalk.green(`${def.label} kaldırıldı.`));
+    console.log(chalk.green(`${def.label} removed.`));
   } else {
-    console.log(chalk.yellow(`${def.label} zaten tanımlı değil.`));
+    console.log(chalk.yellow(`${def.label} is not set.`));
   }
   return true;
 }
@@ -203,10 +203,10 @@ async function runProviderAction(
   const action = await select({
     message: def.label,
     choices: [
-      { name: 'Göster (maskeli)', value: 'show' },
-      { name: 'Ayarla', value: 'set' },
-      { name: 'Kaldır', value: 'unset' },
-      { name: 'Geri', value: 'back' },
+      { name: 'Show (masked)', value: 'show' },
+      { name: 'Set', value: 'set' },
+      { name: 'Remove', value: 'unset' },
+      { name: 'Back', value: 'back' },
     ],
   });
 
@@ -225,21 +225,19 @@ async function runProviderAction(
 
 export async function runAuthPanel(ctx: AuthPanelContext): Promise<void> {
   try {
+    printSection('API keys');
+    printField('File:', authEnvPath());
     while (true) {
-      printSection('API Anahtarları');
-      printField('Dosya:', authEnvPath());
-      console.log();
-
       const choice = await select({
-        message: 'İşlem seç',
+        message: 'Select action',
         choices: [
           ...AUTH_PROVIDER_DEFS.map((def) => ({
             name: `${def.label.padEnd(10)} ${formatProviderStatus(def)}`,
             value: def.token,
           })),
-          { name: '── Proje .env\'den içe aktar', value: IMPORT_CHOICE },
-          { name: '── Yol göster', value: PATH_CHOICE },
-          { name: '── Çık', value: EXIT_CHOICE },
+          { name: '── Import from project .env', value: IMPORT_CHOICE },
+          { name: '── Show path', value: PATH_CHOICE },
+          { name: '── Exit', value: EXIT_CHOICE },
         ],
       });
 
@@ -247,11 +245,11 @@ export async function runAuthPanel(ctx: AuthPanelContext): Promise<void> {
       if (choice === IMPORT_CHOICE) {
         const found = collectProjectAuthVars();
         if (found.size === 0) {
-          console.log(chalk.yellow('Proje .env içinde taşınacak API anahtarı yok.'));
+          console.log(chalk.yellow('No API keys to import in project .env.'));
           continue;
         }
         const overwrite = await confirm({
-          message: '~/.poyraz içindeki mevcut değerlerin üzerine yazılsın mı?',
+          message: 'Overwrite existing values in ~/.poyraz?',
           default: false,
         });
         await importAuthFromProject(ctx, overwrite);
@@ -325,7 +323,7 @@ export async function handleAuthCommand(
   if (text.startsWith('/auth ')) {
     console.log(
       chalk.yellow(
-        'Kullanım: /auth list | path | import [--overwrite] | set <provider> [değer] | unset <provider> | show <provider>'
+        'Usage: /auth list | path | import [--overwrite] | set <provider> [value] | unset <provider> | show <provider>'
       )
     );
     return true;

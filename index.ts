@@ -58,18 +58,8 @@ async function main() {
     await ensureWorkspaceTrustAndLogging();
 
     const { templateName: cliTemplate, model: cliModel } = parseCliArgs();
-    const { name: templateName, source } = resolveTemplateName(cliTemplate);
+    const { name: templateName } = resolveTemplateName(cliTemplate);
     const modelProfile = await resolveModelProfile({ cliModel });
-
-    console.log(chalk.cyan(`[INFO] Poyraz CLI`));
-    const sourceLabel =
-      source === 'cli' ? '(via CLI)' : source === 'env' ? '(via ENV)' : '(default from library)';
-    console.log(chalk.cyan(`[INFO] Template: ${chalk.bold(templateName)} ${sourceLabel}`));
-    console.log(
-      chalk.cyan(
-        `[INFO] Model: ${chalk.bold(modelProfile.model)} (${modelProfile.provider})\n`
-      )
-    );
 
     const agent = templateRegistry.buildAgent(templateName, modelProfile);
     const prefs = loadSessionPrefs();
@@ -84,18 +74,13 @@ async function main() {
     const mcpTools = await mcpClientManager.connectAll();
     if (Object.keys(mcpTools).length > 0) {
       agent.mergeExternalTools(mcpTools);
-      const connected = mcpClientManager.listStates().filter((s) => s.status === 'connected');
-      console.log(
-        chalk.cyan(
-          `[INFO] MCP: ${connected.length} sunucu, ${Object.keys(mcpTools).length} araç bağlandı\n`
-        )
-      );
     }
 
     const repl = new ChatRepl(agent);
     await repl.start();
-  } catch (error: any) {
-    console.error(chalk.red('Initialization failed:'), error.message);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(chalk.red('Initialization failed:'), message);
     process.exit(1);
   }
 }

@@ -28,14 +28,14 @@ export async function ensureWorkspaceTrustAndLogging(): Promise<void> {
 
   try {
     const choice = await select<'trust' | 'no-trust'>({
-      message: 'Bu workspace güvenilir değil. .poyraz/ altında debug logları tutulsun mu?',
+      message: 'This workspace is not trusted. Keep debug logs under .poyraz/?',
       choices: [
         {
-          name: 'Evet, bu workspace\'e güven (logları aç)',
+          name: 'Yes, trust this workspace (enable logs)',
           value: 'trust',
         },
         {
-          name: 'Hayır (dosya logu yok)',
+          name: 'No (no file logging)',
           value: 'no-trust',
         },
       ],
@@ -46,7 +46,7 @@ export async function ensureWorkspaceTrustAndLogging(): Promise<void> {
     applyWorkspaceFileLogging(workspaceRoot, trusted);
 
     if (trusted) {
-      console.log(chalk.gray(`Workspace logları: ${path.join(workspaceRoot, '.poyraz', 'log')}`));
+      console.log(chalk.gray(`Workspace logs: ${path.join(workspaceRoot, '.poyraz', 'log')}`));
     }
   } catch (error) {
     if (isPromptCancelled(error)) {

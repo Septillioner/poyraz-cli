@@ -32,7 +32,7 @@ Order:
 
 If no templates exist, startup fails with an error about syncing bundled templates.
 
-Startup logs show the source: `(via CLI)`, `(via ENV)`, or `(default from library)`.
+The REPL banner shows the resolved template, mode, model, and tool count.
 
 ## Model resolution
 

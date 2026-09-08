@@ -63,7 +63,11 @@ The published binary maps `poyraz` → `./dist/index.js` (`package.json` `bin`).
 |------|------|
 | `index.ts` | Bootstrap: env, trust, template/model, MCP, REPL |
 | `repl.ts` | Main REPL loop |
-| `repl-*.ts` | Commands, auth, MCP, pickers, input, theme, status |
+| `repl-surface.ts` | Transcript / status / toast layout coordinator |
+| `repl-line-editor.ts` | Session-scoped input (history, Tab, keys) |
+| `repl-panel.ts` | Shared Inquirer panel pause/resume wrapper |
+| `repl-router.ts` / `repl-help.ts` / `repl-output.ts` / `repl-banner.ts` | Dispatch, help, stream formatting, banner |
+| `repl-*.ts` | Commands, auth, MCP, pickers, theme, status |
 | `workspace-trust.ts` | First-run trust prompt |
 | `tsup.config.ts` | Build config |
 | `.github/workflows/ci.yml` | CI |
